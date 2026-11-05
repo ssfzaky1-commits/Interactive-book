@@ -1,25 +1,44 @@
 import streamlit as st
 import fitz  # PyMuPDF
-from groq import Groq
+from openai import OpenAI
 import json
 import os
 
-st.set_page_config(page_title="مولد الكتب التفاعلية", page_icon="📖", layout="wide")
+st.set_page_config(page_title="مولد الكتب التفاعلية", page_icon="📖")
 
-st.title("📖 موقع تحويل الكتب لتفاعلية (بالذكاء الاصطناعي)")
-st.write("ارفع أي كتاب PDF، والذكاء الاصطناعي هيقرأه ويحطلك الأسئلة والتفاعلات تلقائياً.")
+st.title("📖 موقع تحويل الكتب لتفاعلية (Gemini)")
+st.write("ارفع كتابك، والذكاء الاصطناعي (Google Gemini) هيقرأه ويحوله لأسئلة تفاعلية تلقائياً.")
 
-# المفتاح السري (ممكن المستخدم يدخله لو حب)
-api_key = st.text_input("أدخل مفتاح Groq API (اللي جبته من موقعهم):", type="password")
+# 1. إدخال المفتاح
+api_key = st.text_input("أدخل مفتاح Gemini API (من aistudio.google.com):", type="password")
 
-uploaded_file = st.file_uploader("ارفع الكتاب (PDF)", type="pdf")
-max_pages = st.number_input("عدد الصفحات اللي عايز تحولها (الذكاء الاصطناعي بياخد وقت، ابدأ بـ 10 صفحات للتجربة)", min_value=1, max_value=100, value=10)
+# 2. رفع الملف
+uploaded_file = st.file_uploader("ارفع ملف PDF", type="pdf")
+
+# 3. اختيار عدد الصفحات
+max_pages = st.number_input("عدد الصفحات اللي عايز الذكاء الاصطناعي يحللها (يفضل 10-20 صفحة)", min_value=1, max_value=50, value=5)
+
+# دالة لتنظيف رد الذكاء الاصطناعي لو حط علامات كود 
+def clean_json_response(text):
+    text = text.strip()
+    if text.startswith("```json"):
+        text = text[7:]
+    if text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    return text.strip()
 
 if uploaded_file and api_key:
     if st.button("🚀 ابدأ التحويل الذكي"):
         try:
-            client = Groq(api_key=api_key)
+            # إعداد العميل باستخدام مكتبة OpenAI لكن موجهة لسيرفرات جوجل
+            client = OpenAI(
+                api_key=api_key,
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+            )
             
+            # حفظ الملف مؤقتاً
             with open("temp.pdf", "wb") as f:
                 f.write(uploaded_file.read())
             
@@ -35,10 +54,9 @@ if uploaded_file and api_key:
                 page = doc[i]
                 text = page.get_text()
                 
-                # لو الصفحة فيها نص كفاية
                 if len(text.strip()) > 50:
                     prompt = f"""
-                    أنت خبير تعليمي. اقرأ النص التالي من صفحة كتاب، وصمم عناصر تفاعلية (أسئلة اختيار من متعدد أو حقول إجابة).
+                    أنت خبير تعليمي. اقرأ النص التالي من كتاب، وصمم عناصر تفاعلية (أسئلة اختيار من متعدد أو حقول إجابة).
                     النص: {text[:3000]}
                     
                     أرجع النتيجة بصيغة JSON فقط (بدون أي كلام إضافي) بهذا الشكل:
@@ -53,17 +71,20 @@ if uploaded_file and api_key:
                     try:
                         response = client.chat.completions.create(
                             messages=[{"role": "user", "content": prompt}],
-                            model="llama3-8b-8192",
-                            response_format={"type": "json_object"}
+                            model="gemini-1.5-flash", 
+                            temperature=0.3
                         )
-                        result = json.loads(response.choices[0].message.content)
+                        
+                        content = response.choices[0].message.content
+                        clean_content = clean_json_response(content)
+                        result = json.loads(clean_content)
                         annotations[i+1] = result.get("elements", [])
                     except Exception as ai_err:
-                        st.warning(f"تخطي صفحة {i+1} بسبب خطأ في الذكاء الاصطناعي.")
+                        st.warning(f"تم تخطي صفحة {i+1} (ممكن يكون النص معقد أو الذكاء الاصطناعي رجع رد غير مفهوم).")
                 
                 progress_bar.progress((i + 1) / pages_to_process)
             
-            # توليد الـ HTML
+            # توليد كود الـ HTML
             html_content = f"""
             <!DOCTYPE html>
             <html dir="rtl"><head><meta charset="utf-8"><title>الكتاب التفاعلي</title>
@@ -73,17 +94,17 @@ if uploaded_file and api_key:
                 .q {{ margin-bottom: 15px; padding: 10px; border-right: 4px solid #2563eb; background: #f8fafc; }}
                 .q h4 {{ margin: 0 0 10px 0; }}
                 label {{ display: block; margin-bottom: 5px; cursor: pointer; }}
-                input[type="text"] {{ width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px; }}
+                input[type="text"] {{ width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }}
             </style></head><body>
-            <h1>📖 الكتاب التفاعلي المولد تلقائياً</h1>
+            <h1>📖 الكتاب التفاعلي</h1>
             <div id="app"></div>
             <script>
-                const data = {json.dumps(annotations)};
+                const data = {json.dumps(annotations, ensure_ascii=False)};
                 const app = document.getElementById('app');
                 for (const page in data) {{
                     const pageDiv = document.createElement('div');
                     pageDiv.className = 'page';
-                    pageDiv.innerHTML = `<h3>أساسيات من الصفحة ${{page}}</h3>`;
+                    pageDiv.innerHTML = `<h3>تفاعلات الصفحة ${{page}}</h3>`;
                     data[page].forEach((el, i) => {{
                         const qDiv = document.createElement('div');
                         qDiv.className = 'q';
@@ -103,9 +124,9 @@ if uploaded_file and api_key:
             </body></html>
             """
             
-            st.success("✅ تم تجهيز الكتاب التفاعلي بنجاح!")
+            st.success("✅ تم تجهيز الكتاب التفاعلي!")
             st.download_button(
-                label="⬇️ تحميل ملف الكتاب التفاعلي (HTML)",
+                label="⬇️ تحميل الكتاب (HTML)",
                 data=html_content,
                 file_name="interactive_book.html",
                 mime="text/html"
