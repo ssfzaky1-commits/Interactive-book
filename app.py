@@ -71,7 +71,7 @@ if uploaded_file and api_key:
                     try:
                         response = client.chat.completions.create(
                             messages=[{"role": "user", "content": prompt}],
-                            model="gemini-1.5-flash", 
+                            model="gemini-1.5-flash", # موديل جوجل السريع والممتاز
                             temperature=0.3
                         )
                         
