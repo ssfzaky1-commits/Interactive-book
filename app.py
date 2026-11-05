@@ -1,13 +1,14 @@
 import streamlit as st
 import fitz  # PyMuPDF
 from google import genai
+from google.genai import types
 import json
 import os
 
 st.set_page_config(page_title="مولد الكتب التفاعلية", page_icon="📖")
 
 st.title("📖 موقع تحويل الكتب لتفاعلية (Gemini)")
-st.write("ارفع كتابك، والذكاء الاصطناعي (Google Gemini) هيقرأه ويحوله لأسئلة تفاعلية تلقائياً.")
+st.write("ارفع كتابك (حتى لو سكانر)، والذكاء الاصطناعي هيقرأ الصفحات ويحولها لأسئلة تفاعلية تلقائياً.")
 
 # قراءة المفتاح من الإعدادات السرية
 api_key = st.secrets.get("GEMINI_API_KEY", "")
@@ -15,13 +16,11 @@ if not api_key:
     st.error("⚠️ مفتاح API غير موجود. تأكد من إضافته في إعدادات Secrets.")
     st.stop()
 
-# إعداد عميل جوجل
 client = genai.Client(api_key=api_key)
 
 uploaded_file = st.file_uploader("ارفع ملف PDF", type="pdf")
 max_pages = st.number_input("عدد الصفحات اللي عايز الذكاء الاصطناعي يحللها", min_value=1, max_value=50, value=5)
 
-# دالة لتنظيف رد الذكاء الاصطناعي لو حط علامات كود
 def clean_json_response(text):
     text = text.strip()
     if text.startswith("```json"): text = text[7:]
@@ -32,58 +31,58 @@ def clean_json_response(text):
 if uploaded_file:
     if st.button("🚀 ابدأ التحويل الذكي"):
         try:
-            # 1. استخدام Spinner أثناء رفع وقراءة الملف
-            with st.spinner("⏳ جاري رفع وقراءة الملف للسيرفر... (برجاء عدم إغلاق الصفحة، الملف كبير وقد يستغرق بعض الوقت)"):
-                with open("temp.pdf", "wb") as f:
-                    f.write(uploaded_file.read())
-                
-            # 2. رسالة توضيحية بعد الرفع
-            st.success("✅ تم رفع الملف بنجاح! جاري تحليل النصوص...")
+            with open("temp.pdf", "wb") as f:
+                f.write(uploaded_file.read())
             
-            # 3. بدء القراءة
             doc = fitz.open("temp.pdf")
             total_pages = len(doc)
             pages_to_process = min(total_pages, max_pages)
             
-            st.info(f"🧠 الذكاء الاصطناعي بيحلل {pages_to_process} صفحة... استنى شوية.")
+            st.info(f"جاري تحليل {pages_to_process} صفحة... (الكتاب سكانر، ممكن ياخد وقت أطول شوية).")
             progress_bar = st.progress(0)
             annotations = {}
             
             for i in range(pages_to_process):
                 page = doc[i]
-                text = page.get_text()
                 
-                if len(text.strip()) > 50:
-                    prompt = f"""
-                    أنت خبير تعليمي. اقرأ النص التالي من كتاب، وصمم عناصر تفاعلية (أسئلة اختيار من متعدد أو حقول إجابة).
-                    النص: {text[:3000]}
-                    
-                    أرجع النتيجة بصيغة JSON فقط (بدون أي كلام إضافي) بهذا الشكل:
-                    {{
-                        "elements": [
-                            {{"type": "choice", "question": "السؤال هنا؟", "options": ["أ", "ب", "ج"], "correct": 0}},
-                            {{"type": "text", "question": "اكتب إجابتك هنا", "answer": "الإجابة المتوقعة"}}
+                # تحويل الصفحة لصورة عشان الذكاء الاصطناعي يقراها
+                pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5)) # دقة مناسبة للقراءة
+                img_bytes = pix.tobytes("jpeg")
+                
+                prompt_text = """
+                هذه صورة لصفحة من كتاب.
+                1. استخرج النص المكتوب في الصورة.
+                2. بناءً على النص، صمم عناصر تفاعلية (أسئلة اختيار من متعدد أو حقول إجابة).
+                
+                أرجع النتيجة بصيغة JSON فقط (بدون أي كلام إضافي) بهذا الشكل:
+                {
+                    "elements": [
+                        {"type": "choice", "question": "السؤال هنا؟", "options": ["أ", "ب", "ج"], "correct": 0},
+                        {"type": "text", "question": "اكتب إجابتك هنا", "answer": "الإجابة المتوقعة"}
+                    ]
+                }
+                """
+                
+                try:
+                    # إرسال الصورة والنص للذكاء الاصطناعي
+                    response = client.models.generate_content(
+                        model='gemini-2.5-flash',
+                        contents=[
+                            types.Part.from_bytes(data=img_bytes, mime_type='image/jpeg'),
+                            prompt_text
                         ]
-                    }}
-                    """
+                    )
                     
-                    try:
-                        # استخدام مكتبة جوجل الرسمية
-                        response = client.models.generate_content(
-                            model='gemini-2.5-flash',
-                            contents=prompt,
-                        )
-                        
-                        content = response.text
-                        clean_content = clean_json_response(content)
-                        result = json.loads(clean_content)
-                        annotations[i+1] = result.get("elements", [])
-                    except Exception as ai_err:
-                        st.warning(f"تم تخطي صفحة {i+1} (ممكن يكون النص معقد أو الذكاء الاصطناعي رجع رد غير مفهوم).")
+                    content = response.text
+                    clean_content = clean_json_response(content)
+                    result = json.loads(clean_content)
+                    annotations[i+1] = result.get("elements", [])
+                except Exception as ai_err:
+                    st.warning(f"تم تخطي صفحة {i+1}: {ai_err}")
                 
                 progress_bar.progress((i + 1) / pages_to_process)
             
-            # 4. توليد كود الـ HTML
+            # توليد كود الـ HTML
             html_content = f"""
             <!DOCTYPE html>
             <html dir="rtl"><head><meta charset="utf-8"><title>الكتاب التفاعلي</title>
@@ -123,15 +122,13 @@ if uploaded_file:
             </body></html>
             """
             
-            st.success("✅ تم تجهيز الكتاب التفاعلي بنجاح!")
+            st.success("✅ تم تجهيز الكتاب التفاعلي!")
             st.download_button(
                 label="⬇️ تحميل الكتاب (HTML)",
                 data=html_content,
                 file_name="interactive_book.html",
                 mime="text/html"
             )
-            
-            # مسح الملف المؤقت بعد الانتهاء
             os.remove("temp.pdf")
             
         except Exception as e:
