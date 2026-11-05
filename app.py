@@ -66,7 +66,7 @@ if uploaded_file:
                 try:
                     # إرسال الصورة والنص للذكاء الاصطناعي
                     response = client.models.generate_content(
-                        model='gemini-2.5-flash',
+                        model='gemini-3.8-flash', # تم التحديث للنموذج الأحدث
                         contents=[
                             types.Part.from_bytes(data=img_bytes, mime_type='image/jpeg'),
                             prompt_text
