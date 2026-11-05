@@ -9,7 +9,7 @@ import time
 st.set_page_config(page_title="مستخرج بيانات الكتب", page_icon="📖")
 
 st.title("📖 مستخرج البيانات (JSON)")
-st.write("ارفع الكتاب، اختار نطاق الصفحات، ونزّل ملف البيانات عشان تدمجه بعدين على جهازك.")
+st.write("ارفع الكتاب، اختار نطاق الصفحات، ونزّل ملف البيانات.")
 
 api_key = st.secrets.get("GEMINI_API_KEY", "")
 if not api_key:
@@ -32,6 +32,38 @@ def clean_json_response(text):
     if text.startswith("```"): text = text[3:]
     if text.endswith("```"): text = text[:-3]
     return text.strip()
+
+# دالة ذكية لإرسال الطلب وإعادة المحاولة عند الازدحام
+def generate_with_retry(img_bytes, prompt_text, max_retries=5):
+    # النماذج المتاحة
+    models = ['gemini-3.8-flash', 'gemini-2.5-flash']
+    
+    for attempt in range(max_retries):
+        for model_name in models:
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=[
+                        types.Part.from_bytes(data=img_bytes, mime_type='image/jpeg'),
+                        prompt_text
+                    ]
+                )
+                return response.text # نجحنا، نرجع النتيجة فوراً
+            except Exception as e:
+                error_str = str(e)
+                # لو السيرفر مشغول (503) أو تعدينا الحد (429)، نستنى ونحاول تاني
+                if "503" in error_str or "429" in error_str or "UNAVAILABLE" in error_str:
+                    continue # جرب الموديل اللي بعده
+                else:
+                    # لو خطأ تاني (زي مفتاح غلط أو صورة مش مقروءة)، نرمي الخطأ
+                    raise e
+        
+        # لو كل الموديلات فشلت في المحاولة دي، نستنى وقت أطول (Exponential Backoff)
+        wait_time = 2 ** attempt # 1, 2, 4, 8, 16 ثانية
+        st.toast(f"⚠️ السيرفر مزدحم، جاري إعادة المحاولة بعد {wait_time} ثانية...")
+        time.sleep(wait_time)
+    
+    raise Exception("فشل الاتصال بالذكاء الاصطناعي بعد كل المحاولات.")
 
 if uploaded_file:
     if st.button("🚀 استخراج البيانات (JSON)"):
@@ -73,34 +105,18 @@ if uploaded_file:
                 }
                 """
                 
-                models_to_try = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash']
-                success = False
-                
-                for model_name in models_to_try:
-                    try:
-                        response = client.models.generate_content(
-                            model=model_name,
-                            contents=[types.Part.from_bytes(data=img_bytes, mime_type='image/jpeg'), prompt_text]
-                        )
-                        content = response.text
-                        clean_content = clean_json_response(content)
-                        result = json.loads(clean_content)
-                        annotations[i+1] = result.get("elements", [])
-                        success = True
-                        break
-                    except Exception as ai_err:
-                        if "503" in str(ai_err) or "429" in str(ai_err):
-                            time.sleep(2)
-                            continue
-                        else:
-                            break
-                            
-                if not success:
-                    st.warning(f"❌ تعذر تحليل الصفحة {i+1}.")
+                try:
+                    # استخدام الدالة الذكية اللي بتعيد المحاولة
+                    raw_content = generate_with_retry(img_bytes, prompt_text)
+                    clean_content = clean_json_response(raw_content)
+                    result = json.loads(clean_content)
+                    annotations[i+1] = result.get("elements", [])
+                except Exception as ai_err:
+                    st.warning(f"❌ تعذر تحليل الصفحة {i+1}: {ai_err}")
                 
                 current_iteration += 1
                 progress_bar.progress(current_iteration / pages_count)
-                time.sleep(1) # استراحة بسيطة
+                time.sleep(1) # استراحة بسيطة بين الصفحات
             
             st.success(f"✅ تم استخراج بيانات الصفحات من {start_page} إلى {actual_end_page}!")
             st.download_button(
