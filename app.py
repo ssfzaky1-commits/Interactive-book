@@ -4,6 +4,7 @@ from google import genai
 from google.genai import types
 import json
 import os
+import time
 
 st.set_page_config(page_title="مولد الكتب التفاعلية", page_icon="📖")
 
@@ -16,6 +17,7 @@ if not api_key:
     st.error("⚠️ مفتاح API غير موجود. تأكد من إضافته في إعدادات Secrets.")
     st.stop()
 
+# إعداد عميل جوجل
 client = genai.Client(api_key=api_key)
 
 uploaded_file = st.file_uploader("ارفع ملف PDF", type="pdf")
@@ -31,6 +33,7 @@ def clean_json_response(text):
 if uploaded_file:
     if st.button("🚀 ابدأ التحويل الذكي"):
         try:
+            # حفظ الملف مؤقتاً
             with open("temp.pdf", "wb") as f:
                 f.write(uploaded_file.read())
             
@@ -46,7 +49,7 @@ if uploaded_file:
                 page = doc[i]
                 
                 # تحويل الصفحة لصورة عشان الذكاء الاصطناعي يقراها
-                pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5)) # دقة مناسبة للقراءة
+                pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5)) # دقة مناسبة
                 img_bytes = pix.tobytes("jpeg")
                 
                 prompt_text = """
@@ -63,22 +66,39 @@ if uploaded_file:
                 }
                 """
                 
-                try:
-                    # إرسال الصورة والنص للذكاء الاصطناعي
-                    response = client.models.generate_content(
-                        model='gemini-3.8-flash', # تم التحديث للنموذج الأحدث
-                        contents=[
-                            types.Part.from_bytes(data=img_bytes, mime_type='image/jpeg'),
-                            prompt_text
-                        ]
-                    )
-                    
-                    content = response.text
-                    clean_content = clean_json_response(content)
-                    result = json.loads(clean_content)
-                    annotations[i+1] = result.get("elements", [])
-                except Exception as ai_err:
-                    st.warning(f"تم تخطي صفحة {i+1}: {ai_err}")
+                # قائمة بالموديلات البديلة في حالة الضغط
+                models_to_try = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash']
+                success = False
+                
+                for model_name in models_to_try:
+                    try:
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=[
+                                types.Part.from_bytes(data=img_bytes, mime_type='image/jpeg'),
+                                prompt_text
+                            ]
+                        )
+                        
+                        content = response.text
+                        clean_content = clean_json_response(content)
+                        result = json.loads(clean_content)
+                        annotations[i+1] = result.get("elements", [])
+                        success = True
+                        break # نجح، نخرج من حلقة الموديلات ونكمل للصفحة اللي بعدها
+                        
+                    except Exception as ai_err:
+                        # لو الخطأ 503 (ضغط عالي) أو 429 (تجاوز حد)، نستنى شوية ونجرب موديل تاني
+                        if "503" in str(ai_err) or "429" in str(ai_err):
+                            st.toast(f"⚠️ النموذج {model_name} مشغول، جاري تجربة نموذج آخر لصفحة {i+1}...")
+                            time.sleep(2) # استنى ثانيتين قبل ما تجرب
+                            continue
+                        else:
+                            st.warning(f"خطأ في الصفحة {i+1} مع {model_name}: {ai_err}")
+                            break
+                            
+                if not success:
+                    st.warning(f"❌ تعذر تحليل الصفحة {i+1} بعد تجربة كل النماذج المتاحة.")
                 
                 progress_bar.progress((i + 1) / pages_to_process)
             
@@ -122,13 +142,15 @@ if uploaded_file:
             </body></html>
             """
             
-            st.success("✅ تم تجهيز الكتاب التفاعلي!")
+            st.success("✅ تم تجهيز الكتاب التفاعلي بنجاح!")
             st.download_button(
                 label="⬇️ تحميل الكتاب (HTML)",
                 data=html_content,
                 file_name="interactive_book.html",
                 mime="text/html"
             )
+            
+            # مسح الملف المؤقت
             os.remove("temp.pdf")
             
         except Exception as e:
