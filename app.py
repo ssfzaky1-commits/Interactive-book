@@ -15,11 +15,13 @@ if not api_key:
     st.error("⚠️ مفتاح API غير موجود. تأكد من إضافته في إعدادات Secrets.")
     st.stop()
 
+# إعداد عميل جوجل
 client = genai.Client(api_key=api_key)
 
 uploaded_file = st.file_uploader("ارفع ملف PDF", type="pdf")
 max_pages = st.number_input("عدد الصفحات اللي عايز الذكاء الاصطناعي يحللها", min_value=1, max_value=50, value=5)
 
+# دالة لتنظيف رد الذكاء الاصطناعي لو حط علامات كود
 def clean_json_response(text):
     text = text.strip()
     if text.startswith("```json"): text = text[7:]
@@ -30,14 +32,21 @@ def clean_json_response(text):
 if uploaded_file:
     if st.button("🚀 ابدأ التحويل الذكي"):
         try:
+            # 1. رسالة توضيحية قبل الرفع
+            st.warning("⏳ جاري رفع وقراءة الملف... (لو الملف كبير، الفترة دي ممكن تاخد دقيقة أو أكتر حسب سرعة النت)")
+            
             with open("temp.pdf", "wb") as f:
                 f.write(uploaded_file.read())
+                
+            # 2. رسالة توضيحية بعد الرفع
+            st.success("✅ تم رفع الملف بنجاح! جاري تحليل النصوص...")
             
+            # 3. بدء القراءة
             doc = fitz.open("temp.pdf")
             total_pages = len(doc)
             pages_to_process = min(total_pages, max_pages)
             
-            st.info(f"جاري تحليل {pages_to_process} صفحة... استنى شوية.")
+            st.info(f"🧠 الذكاء الاصطناعي بيحلل {pages_to_process} صفحة... استنى شوية.")
             progress_bar = st.progress(0)
             annotations = {}
             
@@ -71,11 +80,11 @@ if uploaded_file:
                         result = json.loads(clean_content)
                         annotations[i+1] = result.get("elements", [])
                     except Exception as ai_err:
-                        st.warning(f"تم تخطي صفحة {i+1}: {ai_err}")
+                        st.warning(f"تم تخطي صفحة {i+1} (ممكن يكون النص معقد أو الذكاء الاصطناعي رجع رد غير مفهوم).")
                 
                 progress_bar.progress((i + 1) / pages_to_process)
             
-            # توليد كود الـ HTML
+            # 4. توليد كود الـ HTML
             html_content = f"""
             <!DOCTYPE html>
             <html dir="rtl"><head><meta charset="utf-8"><title>الكتاب التفاعلي</title>
@@ -115,13 +124,15 @@ if uploaded_file:
             </body></html>
             """
             
-            st.success("✅ تم تجهيز الكتاب التفاعلي!")
+            st.success("✅ تم تجهيز الكتاب التفاعلي بنجاح!")
             st.download_button(
                 label="⬇️ تحميل الكتاب (HTML)",
                 data=html_content,
                 file_name="interactive_book.html",
                 mime="text/html"
             )
+            
+            # مسح الملف المؤقت بعد الانتهاء
             os.remove("temp.pdf")
             
         except Exception as e:
