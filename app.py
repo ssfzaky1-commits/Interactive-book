@@ -32,11 +32,10 @@ def clean_json_response(text):
 if uploaded_file:
     if st.button("🚀 ابدأ التحويل الذكي"):
         try:
-            # 1. رسالة توضيحية قبل الرفع
-            st.warning("⏳ جاري رفع وقراءة الملف... (لو الملف كبير، الفترة دي ممكن تاخد دقيقة أو أكتر حسب سرعة النت)")
-            
-            with open("temp.pdf", "wb") as f:
-                f.write(uploaded_file.read())
+            # 1. استخدام Spinner أثناء رفع وقراءة الملف
+            with st.spinner("⏳ جاري رفع وقراءة الملف للسيرفر... (برجاء عدم إغلاق الصفحة، الملف كبير وقد يستغرق بعض الوقت)"):
+                with open("temp.pdf", "wb") as f:
+                    f.write(uploaded_file.read())
                 
             # 2. رسالة توضيحية بعد الرفع
             st.success("✅ تم رفع الملف بنجاح! جاري تحليل النصوص...")
