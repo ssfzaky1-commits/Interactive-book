@@ -1,6 +1,6 @@
 import streamlit as st
 import fitz  # PyMuPDF
-from openai import OpenAI
+from google import genai
 import json
 import os
 
@@ -9,36 +9,27 @@ st.set_page_config(page_title="مولد الكتب التفاعلية", page_ico
 st.title("📖 موقع تحويل الكتب لتفاعلية (Gemini)")
 st.write("ارفع كتابك، والذكاء الاصطناعي (Google Gemini) هيقرأه ويحوله لأسئلة تفاعلية تلقائياً.")
 
-# 1. إدخال المفتاح
-api_key = st.text_input("أدخل مفتاح Gemini API (من aistudio.google.com):", type="password")
+# قراءة المفتاح من الإعدادات السرية
+api_key = st.secrets.get("GEMINI_API_KEY", "")
+if not api_key:
+    st.error("⚠️ مفتاح API غير موجود. تأكد من إضافته في إعدادات Secrets.")
+    st.stop()
 
-# 2. رفع الملف
+client = genai.Client(api_key=api_key)
+
 uploaded_file = st.file_uploader("ارفع ملف PDF", type="pdf")
+max_pages = st.number_input("عدد الصفحات اللي عايز الذكاء الاصطناعي يحللها", min_value=1, max_value=50, value=5)
 
-# 3. اختيار عدد الصفحات
-max_pages = st.number_input("عدد الصفحات اللي عايز الذكاء الاصطناعي يحللها (يفضل 10-20 صفحة)", min_value=1, max_value=50, value=5)
-
-# دالة لتنظيف رد الذكاء الاصطناعي لو حط علامات كود 
 def clean_json_response(text):
     text = text.strip()
-    if text.startswith("```json"):
-        text = text[7:]
-    if text.startswith("```"):
-        text = text[3:]
-    if text.endswith("```"):
-        text = text[:-3]
+    if text.startswith("```json"): text = text[7:]
+    if text.startswith("```"): text = text[3:]
+    if text.endswith("```"): text = text[:-3]
     return text.strip()
 
-if uploaded_file and api_key:
+if uploaded_file:
     if st.button("🚀 ابدأ التحويل الذكي"):
         try:
-            # إعداد العميل باستخدام مكتبة OpenAI لكن موجهة لسيرفرات جوجل
-            client = OpenAI(
-                api_key=api_key,
-                base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
-            )
-            
-            # حفظ الملف مؤقتاً
             with open("temp.pdf", "wb") as f:
                 f.write(uploaded_file.read())
             
@@ -69,18 +60,18 @@ if uploaded_file and api_key:
                     """
                     
                     try:
-                        response = client.chat.completions.create(
-                            messages=[{"role": "user", "content": prompt}],
-                            model="gemini-1.5-flash", # موديل جوجل السريع والممتاز
-                            temperature=0.3
+                        # استخدام مكتبة جوجل الرسمية
+                        response = client.models.generate_content(
+                            model='gemini-2.5-flash',
+                            contents=prompt,
                         )
                         
-                        content = response.choices[0].message.content
+                        content = response.text
                         clean_content = clean_json_response(content)
                         result = json.loads(clean_content)
                         annotations[i+1] = result.get("elements", [])
                     except Exception as ai_err:
-                        st.warning(f"تم تخطي صفحة {i+1} (ممكن يكون النص معقد أو الذكاء الاصطناعي رجع رد غير مفهوم).")
+                        st.warning(f"تم تخطي صفحة {i+1}: {ai_err}")
                 
                 progress_bar.progress((i + 1) / pages_to_process)
             
@@ -131,7 +122,6 @@ if uploaded_file and api_key:
                 file_name="interactive_book.html",
                 mime="text/html"
             )
-            
             os.remove("temp.pdf")
             
         except Exception as e:
